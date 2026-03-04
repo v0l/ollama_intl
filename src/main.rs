@@ -138,7 +138,7 @@ async fn main() {
         set.spawn(async move {
             let translated = translate_file(&source, file, cfg, pb).await;
             // Start with existing as base, then overwrite with freshly translated keys
-            let merged = if let Some(mut existing) = existing {
+            let mut merged = if let Some(mut existing) = existing {
                 for (k, v) in translated.into_messages() {
                     existing.messages_mut().insert(k, v);
                 }
@@ -146,6 +146,9 @@ async fn main() {
             } else {
                 translated
             };
+            // Remove keys that no longer exist in the source file
+            let source_keys = source.messages();
+            merged.messages_mut().retain(|k, _| source_keys.contains_key(k));
             (target, merged)
         });
     }
