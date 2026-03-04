@@ -5,9 +5,9 @@ mod types;
 use std::sync::Arc;
 
 use clap::Parser;
-use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use tokio::fs;
 
 use indicatif::MultiProgress;
 use parse::{parse_input, serialise};
@@ -66,30 +66,32 @@ struct Args {
     /// Input file path, or "-" for stdin
     #[arg(short, long, default_value = "-")]
     input: String,
+
+    /// Re-translate all strings even if an existing translation exists
+    #[arg(long)]
+    force: bool,
 }
 
-fn read_input(path: &str) -> String {
-    let mut buf = String::new();
+async fn read_input(path: &str) -> String {
     if path == "-" {
+        let mut buf = String::new();
         io::stdin()
             .read_to_string(&mut buf)
             .expect("failed to read stdin");
+        buf
     } else {
-        fs::File::open(path)
-            .and_then(|mut f| f.read_to_string(&mut buf))
-            .unwrap_or_else(|e| {
-                eprintln!("error: cannot read {path}: {e}");
-                std::process::exit(1);
-            });
+        fs::read_to_string(path).await.unwrap_or_else(|e| {
+            eprintln!("error: cannot read {path}: {e}");
+            std::process::exit(1);
+        })
     }
-    buf
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
-    let raw = read_input(&args.input);
+    let raw = read_input(&args.input).await;
     let parsed = parse_input(&raw, &args.input).unwrap_or_else(|e| {
         eprintln!("error: {e}");
         std::process::exit(1);
@@ -115,16 +117,38 @@ async fn main() {
             target_code: target.code.clone(),
         });
 
-        let pb = make_pb(&cfg, &parsed, &mp);
-        let file = parsed.clone();
+        // Load existing translations for this target, unless --force
+        let existing = if args.force {
+            None
+        } else {
+            let path = args.output_dir.join(format!("{}.{}", target.code, ext));
+            fs::read_to_string(&path).await.ok().and_then(|s| parse_input(&s, &path.to_string_lossy()).ok())
+        };
+
+        // Build a file containing only untranslated keys
+        let mut file = parsed.clone();
+        if let Some(ref existing) = existing {
+            file.messages_mut().retain(|k, _| !existing.messages().contains_key(k));
+        }
+
+        let pb = make_pb(&cfg, &file, &mp);
         let target = target.clone();
+        let source = parsed.clone();
 
         set.spawn(async move {
-            let translated = translate_file(file, cfg, pb).await;
-            (target, translated)
+            let translated = translate_file(&source, file, cfg, pb).await;
+            // Start with existing as base, then overwrite with freshly translated keys
+            let merged = if let Some(mut existing) = existing {
+                for (k, v) in translated.into_messages() {
+                    existing.messages_mut().insert(k, v);
+                }
+                existing
+            } else {
+                translated
+            };
+            (target, merged)
         });
     }
-    mp.println("Starting..").unwrap();
 
     let mut results: Vec<(Target, _)> = Vec::new();
     let completed = async {
@@ -150,7 +174,7 @@ async fn main() {
         });
 
         let path = args.output_dir.join(format!("{}.{}", target.code, ext));
-        fs::write(&path, &output).unwrap_or_else(|e| {
+        fs::write(&path, &output).await.unwrap_or_else(|e| {
             eprintln!("error: cannot write {}: {e}", path.display());
             std::process::exit(1);
         });

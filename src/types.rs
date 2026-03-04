@@ -50,6 +50,12 @@ impl IntlFile {
     pub fn len(&self) -> usize {
         self.messages().len()
     }
+
+    pub fn into_messages(self) -> HashMap<String, FormattedMessage> {
+        match self {
+            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) => m,
+        }
+    }
 }
 
 impl<'a> IntoIterator for &'a IntlFile {
