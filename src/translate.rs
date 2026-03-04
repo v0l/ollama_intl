@@ -61,6 +61,35 @@ pub fn simple_placeholders(s: &str) -> Vec<String> {
     vars
 }
 
+/// Replace each `{...}` placeholder in `text` with an opaque token `\x02Pn\x03`
+/// so the model never sees or modifies them.
+/// Returns the tokenised string and the ordered list of original placeholder strings.
+pub fn extract_placeholders(text: &str) -> (String, Vec<String>) {
+    let placeholders = simple_placeholders(text);
+    if placeholders.is_empty() {
+        return (text.to_string(), vec![]);
+    }
+    let mut result = text.to_string();
+    for (i, ph) in placeholders.iter().enumerate() {
+        let token = format!("\x02P{i}\x03");
+        // Only replace the first occurrence each time so order is preserved
+        if let Some(pos) = result.find(ph.as_str()) {
+            result.replace_range(pos..pos + ph.len(), &token);
+        }
+    }
+    (result, placeholders)
+}
+
+/// Restore opaque tokens `\x02Pn\x03` back to their original placeholder strings.
+pub fn restore_placeholders(text: &str, placeholders: &[String]) -> String {
+    let mut result = text.to_string();
+    for (i, ph) in placeholders.iter().enumerate() {
+        let token = format!("\x02P{i}\x03");
+        result = result.replace(&token, ph);
+    }
+    result
+}
+
 /// Verify that all placeholders from `source` are present in `translated`.
 /// Returns `None` if valid, or a warning string listing the missing ones.
 pub fn check_placeholders(source: &FormattedMessage, translated: &FormattedMessage) -> Option<String> {
@@ -88,6 +117,9 @@ pub async fn translate_text(
     cfg: &TranslateConfig,
     client: &Client<OpenAIConfig>,
 ) -> Result<String, String> {
+    // Replace placeholders with opaque tokens so the model never touches them
+    let (tokenised, placeholders) = extract_placeholders(text);
+
     // DO NOT MODIFY PROMPT, IT MUST BE EXACTLY LIKE THIS
     let prompt = format!(
         include_str!("translategemma.txt"),
@@ -95,7 +127,7 @@ pub async fn translate_text(
         SOURCE_CODE = cfg.source_code,
         TARGET_LANG = cfg.target_lang,
         TARGET_CODE = cfg.target_code,
-        TEXT = text,
+        TEXT = tokenised,
     );
 
     let response = client
@@ -114,13 +146,15 @@ pub async fn translate_text(
         .await
         .map_err(|e| format!("API error: {e}"))?;
 
-    Ok(response.choices[0]
+    let raw = response.choices[0]
         .message
         .content
         .as_deref()
         .unwrap_or("")
         .trim()
-        .to_string())
+        .to_string();
+
+    Ok(restore_placeholders(&raw, &placeholders))
 }
 
 pub async fn translate_file(
@@ -159,6 +193,34 @@ pub async fn translate_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_restore_roundtrip() {
+        let text = "You have {count, plural, one {# message} other {# messages}} in {folder}";
+        let (tokenised, placeholders) = extract_placeholders(text);
+        assert!(!tokenised.contains('{'), "tokenised should have no braces: {tokenised:?}");
+        assert_eq!(placeholders.len(), 2);
+        let restored = restore_placeholders(&tokenised, &placeholders);
+        assert_eq!(restored, text);
+    }
+
+    #[test]
+    fn test_extract_no_placeholders() {
+        let text = "Hello world";
+        let (tokenised, placeholders) = extract_placeholders(text);
+        assert_eq!(tokenised, text);
+        assert!(placeholders.is_empty());
+    }
+
+    #[test]
+    fn test_extract_escaped_braces_ignored() {
+        let text = "Price: {{amount}} USD and {count} items";
+        let (tokenised, placeholders) = extract_placeholders(text);
+        // Only {count} is a real placeholder; {{amount}} is escaped
+        assert_eq!(placeholders, vec!["{count}"]);
+        let restored = restore_placeholders(&tokenised, &placeholders);
+        assert_eq!(restored, text);
+    }
 
     #[test]
     fn test_simple_placeholders_escaped() {
