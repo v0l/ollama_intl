@@ -11,3 +11,4 @@ async-openai = { version = "0.33", features = ["chat-completion"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde_yaml = "0.9"
 indicatif = { version = "0.18", default-features = false, features = ["tokio", "unicode-width"] }
+formatjs_icu_messageformat_parser = "0.2"
