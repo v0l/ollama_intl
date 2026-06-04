@@ -326,8 +326,9 @@ pub async fn translate_file(
     mut file: IntlFile,
     cfg: Arc<TranslateConfig>,
     pb: ProgressBar,
-) -> IntlFile {
+) -> (IntlFile, usize) {
     let client = Arc::new(make_client(&cfg));
+    let mut errors = 0usize;
 
     for (key, msg) in file.messages_mut() {
         // Warn if the message uses a generic plural pattern like `{# {unit}s}` —
@@ -348,7 +349,12 @@ pub async fn translate_file(
         let translated_text = match translate_text(&msg.text, &cfg, &client).await {
             Ok(t) => t,
             Err(e) => {
-                pb.println(format!("warn: failed to translate \"{key}\": {e}"));
+                if errors == 0 {
+                    pb.suspend(|| {
+                        eprintln!("error: translation failed: {e}");
+                    });
+                }
+                errors += 1;
                 msg.text.to_string()
             }
         };
@@ -365,8 +371,13 @@ pub async fn translate_file(
         }
     }
 
+    if errors > 0 {
+        pb.suspend(|| {
+            eprintln!("error: {errors} translation(s) failed");
+        });
+    }
     pb.finish_with_message(format!("{} ({}) done", cfg.target_lang, cfg.target_code));
-    file
+    (file, errors)
 }
 
 #[cfg(test)]

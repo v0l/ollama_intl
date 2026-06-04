@@ -104,7 +104,7 @@ async fn main() {
     };
 
     let mp = MultiProgress::new();
-    let mut set: JoinSet<(Target, _)> = JoinSet::new();
+    let mut set: JoinSet<(Target, _, usize)> = JoinSet::new();
 
     for target in &args.targets {
         let cfg = Arc::new(TranslateConfig {
@@ -136,7 +136,7 @@ async fn main() {
         let source = parsed.clone();
 
         set.spawn(async move {
-            let translated = translate_file(&source, file, cfg, pb).await;
+            let (translated, errs) = translate_file(&source, file, cfg, pb).await;
             // Start with existing as base, then overwrite with freshly translated keys
             let mut merged = if let Some(mut existing) = existing {
                 for (k, v) in translated.into_messages() {
@@ -149,11 +149,11 @@ async fn main() {
             // Remove keys that no longer exist in the source file
             let source_keys = source.messages();
             merged.messages_mut().retain(|k, _| source_keys.contains_key(k));
-            (target, merged)
+            (target, merged, errs)
         });
     }
 
-    let mut results: Vec<(Target, _)> = Vec::new();
+    let mut results: Vec<(Target, _, usize)> = Vec::new();
     let completed = async {
         while let Some(res) = set.join_next().await {
             results.push(res.expect("translation task panicked"));
@@ -170,7 +170,9 @@ async fn main() {
     }
     let _ = mp.clear();
 
-    for (target, translated) in results {
+    let mut total_errors = 0usize;
+    for (target, translated, errs) in results {
+        total_errors += errs;
         let output = serialise(&translated).unwrap_or_else(|e| {
             eprintln!("error: serialisation failed for {}: {e}", target.code);
             std::process::exit(1);
@@ -182,5 +184,8 @@ async fn main() {
             std::process::exit(1);
         });
         println!("written: {}", path.display());
+    }
+    if total_errors > 0 {
+        std::process::exit(1);
     }
 }
