@@ -1,6 +1,6 @@
 ---
 name: ollama_intl
-description: Translates i18n resource files (JSON, YAML) using Ollama and TranslateGemma. Supports Simple, FormatJS/React-Intl, and Rails formats. Detects format automatically and preserves ICU MessageFormat placeholders. Use when translating locale files, i18n resources, or when the user mentions translating JSON/YAML language files with Ollama.
+description: Translates i18n resource files (JSON, YAML) using Ollama and TranslateGemma. Supports Simple, FormatJS/React-Intl, Crowdin/extracted, and Rails formats. Detects format automatically and round-trips each format (output matches input). Preserves ICU MessageFormat placeholders. Use when translating locale files, i18n resources, or when the user mentions translating JSON/YAML language files with Ollama.
 license: MIT
 compatibility: Requires a running Ollama instance with translategemma:27b pulled, or any OpenAI-compatible LLM endpoint. Requires Rust toolchain to build.
 metadata:
@@ -11,7 +11,12 @@ allowed-tools: Bash(cargo:*) Bash(ollama:*) Bash(ollama_intl:*) Read
 
 # ollama-intl
 
-Translates i18n resource files using [Ollama](https://ollama.com) and [TranslateGemma](https://ollama.com/library/translategemma). Supports three formats, auto-detected by content and file extension.
+Translates i18n resource files using [Ollama](https://ollama.com) and [TranslateGemma](https://ollama.com/library/translategemma). Supports four formats, auto-detected by content and file extension:
+
+- **Simple** — flat `{ "key": "value" }` maps
+- **FormatJS** — React-Intl compiled output with `defaultMessage` keys
+- **Crowdin / extracted** — `@formatjs/cli extract` output with `message` keys
+- **Rails** — Ruby i18n YAML with locale wrapper
 
 Install via `cargo install --git https://github.com/v0l/ollama_intl.git`. Written in Rust.
 
@@ -98,9 +103,10 @@ ollama_intl -i en.json -o . -t German:de --force
 |---|---|---|
 | **Simple** | Flat key→string map | `{ "key": "value" }` / `key: value` |
 | **FormatJS** | React-Intl compiled output | `{ "id": { "defaultMessage": "...", "description": "..." } }` |
+| **Crowdin** | `@formatjs/cli extract` output | `{ "hash": { "message": "..." } }` |
 | **Rails** | Ruby i18n YAML with locale wrapper | `en:\n  key: value` |
 
-Format detection is automatic based on file extension (`.json` → JSON parsing, `.yaml`/`.yml` → YAML parsing) and content structure. FormatJS JSON is detected by the presence of `defaultMessage` keys.
+Each format is round-tripped — output matches input format. Crowdin files stay Crowdin, FormatJS stays FormatJS, etc.
 
 ## Features
 
@@ -166,6 +172,7 @@ ollama_intl/
 
 ## Edge cases and gotchas
 
+- **Crowdin format**: Values must have exactly a `"message"` string field. The output preserves the same `{"hash": {"message": "..."}}` structure.
 - **Rails YAML**: The top-level locale key is preserved as-is in the output — update it manually if the target language code differs.
 - **FormatJS descriptions**: The `description` field is preserved verbatim (not translated) since it's a developer hint, not user-visible text.
 - **Escaped braces**: `{{` and `}}` are correctly treated as literal braces, not placeholders.

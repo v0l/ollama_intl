@@ -40,6 +40,20 @@ pub fn parse_json(s: &str) -> Result<IntlFile, ParseError> {
             ));
         }
     }
+    // Try Crowdin / extracted format — values are objects containing `message`
+    // (output of `@formatjs/cli extract`)
+    if let Ok(m) = serde_json::from_str::<HashMap<String, serde_json::Value>>(s) {
+        if !m.is_empty() && m.values().all(|v| v.get("message").and_then(|v| v.as_str()).is_some()) {
+            return Ok(IntlFile::Crowdin(
+                m.into_iter()
+                    .map(|(k, v)| {
+                        let text = v["message"].as_str().unwrap().to_string();
+                        (k, FormattedMessage { text, note: None })
+                    })
+                    .collect(),
+            ));
+        }
+    }
     // Fall back to a flat string map
     serde_json::from_str::<HashMap<String, String>>(s)
         .map(|m| {
@@ -133,6 +147,17 @@ pub fn serialise(file: &IntlFile) -> Result<String, serde_json::Error> {
                             description: v.note.clone(),
                         },
                     )
+                })
+                .collect();
+            serde_json::to_string_pretty(&wire)
+        }
+        IntlFile::Crowdin(m) => {
+            let wire: BTreeMap<&String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("message".to_string(), serde_json::Value::String(v.text.clone()));
+                    (k, serde_json::Value::Object(obj))
                 })
                 .collect();
             serde_json::to_string_pretty(&wire)
@@ -261,6 +286,43 @@ mod tests {
             panic!("expected Rails")
         };
         assert_eq!(locale, "de");
+    }
+
+    // --- JSON: Crowdin --
+
+    #[test]
+    fn test_parse_json_crowdin() {
+        let s = r#"{"+A4md8": {"message": "Hello World"}}"#;
+        let IntlFile::Crowdin(map) = parse_json(s).unwrap() else {
+            panic!("expected Crowdin")
+        };
+        assert_eq!(map["+A4md8"].text, "Hello World");
+    }
+
+    #[test]
+    fn test_parse_json_crowdin_real_file() {
+        let s = r#"{
+            "+A4md8": {"message": "Hello World"},
+            "2RFWLf": {"message": "Speedtest"},
+            "qq7WMq": {"message": "All VPS come with 1x IPv4 and 1x IPv6 address."}
+        }"#;
+        let IntlFile::Crowdin(map) = parse_json(s).unwrap() else {
+            panic!("expected Crowdin")
+        };
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["+A4md8"].text, "Hello World");
+        assert_eq!(map["2RFWLf"].text, "Speedtest");
+    }
+
+    #[test]
+    fn test_roundtrip_crowdin() {
+        let s = r#"{"+A4md8": {"message": "Hello World"}}"#;
+        let out = serialise(&parse_json(s).unwrap()).unwrap();
+        let IntlFile::Crowdin(map) = parse_json(&out).unwrap() else {
+            panic!("roundtripped output should parse as Crowdin")
+        };
+        assert_eq!(map["+A4md8"].text, "Hello World");
+        assert!(out.contains("\"message\""), "output should contain 'message' key");
     }
 
     // --- Format detection via extension ---

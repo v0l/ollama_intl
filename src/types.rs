@@ -20,7 +20,7 @@ pub struct FormatJSWire {
     pub description: Option<String>,
 }
 
-/// The three well-known i18n message formats we support.
+/// The four well-known i18n message formats we support.
 /// All variants store `HashMap<String, FormattedMessage>` internally.
 #[derive(Debug, Clone)]
 pub enum IntlFile {
@@ -32,18 +32,21 @@ pub enum IntlFile {
 
     /// Rails / Ruby i18n YAML with a top-level locale wrapper.
     Rails(String, HashMap<String, FormattedMessage>),
+
+    /// FormatJS extracted (`@formatjs/cli extract`) with `{"message": "..."}` values.
+    Crowdin(HashMap<String, FormattedMessage>),
 }
 
 impl IntlFile {
     pub fn messages(&self) -> &HashMap<String, FormattedMessage> {
         match self {
-            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) => m,
+            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) | IntlFile::Crowdin(m) => m,
         }
     }
 
     pub fn messages_mut(&mut self) -> &mut HashMap<String, FormattedMessage> {
         match self {
-            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) => m,
+            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) | IntlFile::Crowdin(m) => m,
         }
     }
 
@@ -53,7 +56,7 @@ impl IntlFile {
 
     pub fn into_messages(self) -> HashMap<String, FormattedMessage> {
         match self {
-            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) => m,
+            IntlFile::Simple(m) | IntlFile::FormatJS(m) | IntlFile::Rails(_, m) | IntlFile::Crowdin(m) => m,
         }
     }
 }
